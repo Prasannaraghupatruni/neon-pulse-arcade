@@ -136,6 +136,8 @@ export class GameEngine {
   private magnetTimer = 0;
   private vacuumActive = false;
   private hyperCoreTimer = 0;
+  public controlMode: 'camera' | 'touch' = 'camera';
+  private virtualGesture: 'none' | 'pinch' | 'fist' | 'open' | 'peace' | 'thumbs_up' | 'rock' = 'none';
   private detectedGesture: 'none' | 'pinch' | 'fist' | 'open' | 'peace' | 'thumbs_up' | 'rock' = 'none';
   private novaBlastCooldown = 0;
   private novaBlastCooldownMax = 8;
@@ -286,6 +288,25 @@ export class GameEngine {
     soundSynth.stopBgm();
   }
 
+  public setControlMode(mode: 'camera' | 'touch') {
+    this.controlMode = mode;
+    if (mode === 'touch') {
+      this.isHandTracked = true;
+    }
+  }
+
+  public setVirtualGesture(gesture: 'none' | 'pinch' | 'fist' | 'open' | 'peace' | 'thumbs_up' | 'rock') {
+    const prevGesture = this.detectedGesture;
+    this.virtualGesture = gesture;
+    this.detectedGesture = gesture;
+    
+    if (gesture === 'open' && prevGesture !== 'open' && this.novaBlastCooldown <= 0) {
+      this.triggerNovaBlast();
+    }
+    
+    this.isShieldActive = this.detectedGesture === 'pinch' && this.shieldEnergy > 0;
+  }
+
   public updateTracking(
     x: number,
     y: number,
@@ -294,16 +315,22 @@ export class GameEngine {
     isHandTracked: boolean,
     landmarks?: Point[]
   ) {
-    this.isHandTracked = isHandTracked;
-    this.trackingConfidence = confidence;
-    if (landmarks) {
-      this.rawHandLandmarks = landmarks;
-    }
+    if (this.controlMode === 'touch') {
+      if (landmarks !== undefined) return; // Ignore camera tracking updates in Touch Mode
+      this.isHandTracked = true;
+      this.trackingConfidence = 1.0;
+    } else {
+      this.isHandTracked = isHandTracked;
+      this.trackingConfidence = confidence;
+      if (landmarks) {
+        this.rawHandLandmarks = landmarks;
+      }
 
-    if (!isHandTracked) {
-      this.isShieldActive = false;
-      this.detectedGesture = 'none';
-      return;
+      if (!isHandTracked) {
+        this.isShieldActive = false;
+        this.detectedGesture = 'none';
+        return;
+      }
     }
 
     const dt = 0.033; // estimated tracking interval
@@ -382,6 +409,8 @@ export class GameEngine {
       }
     } else if (isPinching) {
       currentGesture = 'pinch';
+    } else {
+      currentGesture = this.virtualGesture;
     }
 
     if (currentGesture === 'open' && this.detectedGesture !== 'open' && this.novaBlastCooldown <= 0) {
@@ -1513,14 +1542,18 @@ export class GameEngine {
     const isDetecting = this.detectedGesture === 'thumbs_up';
     const isPinching = this.isShieldActive;
     
-    let instructionText = "SHOW THUMBS UP 👍 TO UPGRADE";
+    let instructionText = this.controlMode === 'touch' 
+      ? "HOLD SHIELD 🤏 TO UPGRADE" 
+      : "SHOW THUMBS UP 👍 (OR HOLD SHIELD 🤏) TO UPGRADE";
     let instructionColor = 'rgba(255, 255, 255, 0.45)';
     
     if (isDetecting) {
       instructionText = "👍 THUMBS UP DETECTED! HOLDING...";
       instructionColor = '#ffea00';
     } else if (isPinching) {
-      instructionText = "🤏 OVERRIDE PINCH DETECTED! HOLDING...";
+      instructionText = this.controlMode === 'touch'
+        ? "🤏 SHIELD HELD! HOLDING..."
+        : "🤏 OVERRIDE PINCH DETECTED! HOLDING...";
       instructionColor = '#00ffff';
     }
 

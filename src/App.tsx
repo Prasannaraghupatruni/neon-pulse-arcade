@@ -164,6 +164,12 @@ export const App: React.FC = () => {
 
   const [triggerCameraTest, setTriggerCameraTest] = useState(false);
 
+  const [controlMode, setControlMode] = useState<'camera' | 'touch'>(() => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    return isMobile ? 'touch' : 'camera';
+  });
+  const [isPointerDown, setIsPointerDown] = useState(false);
+
   // Fetch High Scores on mount
   useEffect(() => {
     const savedScores = localStorage.getItem('neon_pulse_leaderboard');
@@ -204,6 +210,7 @@ export const App: React.FC = () => {
       };
 
       const engine = new GameEngine(canvasRef.current, settings, upgrades, callbacks, viewMode === 'sandbox');
+      engine.setControlMode(controlMode);
       engineRef.current = engine;
       engine.start();
 
@@ -213,6 +220,13 @@ export const App: React.FC = () => {
       };
     }
   }, [viewMode]);
+
+  // Synchronize controlMode changes to the active game engine
+  useEffect(() => {
+    if (engineRef.current) {
+      engineRef.current.setControlMode(controlMode);
+    }
+  }, [controlMode]);
 
   // Set up random missions on game start
   const setupMissions = () => {
@@ -327,6 +341,39 @@ export const App: React.FC = () => {
     }
   };
 
+  const handlePointerMove = (clientX: number, clientY: number) => {
+    if (!canvasRef.current || !engineRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
+    const clampedX = Math.max(0, Math.min(1, x));
+    const clampedY = Math.max(0, Math.min(1, y));
+    engineRef.current.updateTracking(clampedX, clampedY, false, 1.0, true);
+  };
+
+  const handleCanvasTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (controlMode !== 'touch') return;
+    if (e.touches.length > 0) {
+      const touch = e.touches[0];
+      handlePointerMove(touch.clientX, touch.clientY);
+    }
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (controlMode !== 'touch') return;
+    setIsPointerDown(true);
+    handlePointerMove(e.clientX, e.clientY);
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (controlMode !== 'touch' || !isPointerDown) return;
+    handlePointerMove(e.clientX, e.clientY);
+  };
+
+  const handleCanvasMouseUp = () => {
+    setIsPointerDown(false);
+  };
+
   const handleTelemetryUpdate = (data: typeof telemetry) => {
     setTelemetry(data);
   };
@@ -408,12 +455,19 @@ export const App: React.FC = () => {
       {viewMode === 'playing' || viewMode === 'sandbox' || viewMode === 'paused' ? (
         <canvas 
           ref={canvasRef} 
+          onTouchStart={handleCanvasTouch}
+          onTouchMove={handleCanvasTouch}
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
+          onMouseLeave={handleCanvasMouseUp}
           style={{
             gridColumn: '1',
             gridRow: '1',
             width: '100%',
             height: '100%',
-            display: 'block'
+            display: 'block',
+            touchAction: 'none'
           }}
         />
       ) : null}
@@ -509,7 +563,9 @@ export const App: React.FC = () => {
           2. ACTIVE PLAYING VIEW HUD & CAMERA
           ==================================================== */}
       {(viewMode === 'playing' || viewMode === 'sandbox') && (
-        <div className="playing-layout">
+        <div className="playing-layout" style={{
+          gridTemplateColumns: controlMode === 'touch' ? '1fr' : undefined
+        }}>
           <HUDOverlay 
             score={engineState?.score || 0}
             comboMultiplier={engineState?.comboMultiplier || 1}
@@ -526,41 +582,110 @@ export const App: React.FC = () => {
             onShowInstructions={handlePauseToggle}
             detectedGesture={engineState?.detectedGesture || 'none'}
             novaBlastCooldown={engineState?.novaBlastCooldown || 0}
+            controlMode={controlMode}
+            onControlModeToggle={() => setControlMode(prev => prev === 'camera' ? 'touch' : 'camera')}
           />
 
-          <div className="webcam-sidebar" style={{ display: 'flex', flexDirection: 'column', gap: '16px', pointerEvents: 'auto' }}>
-            <WebcamView 
-              settings={settings}
-              onTrackingUpdate={handleTrackingUpdate}
-              isPaused={false}
-              onTelemetryUpdate={handleTelemetryUpdate}
-              triggerCameraTest={triggerCameraTest}
-              onCameraTestComplete={() => setTriggerCameraTest(false)}
-            />
-
-            {showDiagnostics && (
-              <DiagnosticsPanel
-                cameraStatus={telemetry.cameraStatus}
-                trackingStatus={telemetry.trackingStatus}
-                resolution={telemetry.resolution}
-                trackingFps={telemetry.trackingFps}
-                renderFps={engineState?.fps || 0}
-                handsCount={telemetry.handsCount}
-                confidence={telemetry.confidence}
-                lastTimestamp={telemetry.lastTimestamp}
-                modelLoaded={telemetry.cameraStatus === 'ready'}
-                onClose={() => setShowDiagnostics(false)}
-                streamActive={telemetry.streamActive}
-                videoTracksCount={telemetry.videoTracksCount}
-                videoReadyState={telemetry.videoReadyState}
-                frameCount={telemetry.frameCount}
-                diagnosticLogs={telemetry.diagnosticLogs}
-                onRunCameraTest={() => setTriggerCameraTest(true)}
-                isTestingCamera={telemetry.isTestingCamera}
-                cameraTestResults={telemetry.cameraTestResults}
+          {controlMode === 'camera' && (
+            <div className="webcam-sidebar" style={{ display: 'flex', flexDirection: 'column', gap: '16px', pointerEvents: 'auto' }}>
+              <WebcamView 
+                settings={settings}
+                onTrackingUpdate={handleTrackingUpdate}
+                isPaused={false}
+                onTelemetryUpdate={handleTelemetryUpdate}
+                triggerCameraTest={triggerCameraTest}
+                onCameraTestComplete={() => setTriggerCameraTest(false)}
+                controlMode={controlMode}
               />
-            )}
-          </div>
+
+              {showDiagnostics && (
+                <DiagnosticsPanel
+                  cameraStatus={telemetry.cameraStatus}
+                  trackingStatus={telemetry.trackingStatus}
+                  resolution={telemetry.resolution}
+                  trackingFps={telemetry.trackingFps}
+                  renderFps={engineState?.fps || 0}
+                  handsCount={telemetry.handsCount}
+                  confidence={telemetry.confidence}
+                  lastTimestamp={telemetry.lastTimestamp}
+                  modelLoaded={telemetry.cameraStatus === 'ready'}
+                  onClose={() => setShowDiagnostics(false)}
+                  streamActive={telemetry.streamActive}
+                  videoTracksCount={telemetry.videoTracksCount}
+                  videoReadyState={telemetry.videoReadyState}
+                  frameCount={telemetry.frameCount}
+                  diagnosticLogs={telemetry.diagnosticLogs}
+                  onRunCameraTest={() => setTriggerCameraTest(true)}
+                  isTestingCamera={telemetry.isTestingCamera}
+                  cameraTestResults={telemetry.cameraTestResults}
+                />
+              )}
+            </div>
+          )}
+
+          {controlMode === 'touch' && (
+            <div className="virtual-gamepad">
+              {/* Left Action Pad (Shield & Gravity) */}
+              <div className="gamepad-zone left-zone">
+                <button 
+                  className="gamepad-btn shield-btn"
+                  onTouchStart={() => engineRef.current?.setVirtualGesture('pinch')}
+                  onTouchEnd={() => engineRef.current?.setVirtualGesture('none')}
+                  onTouchCancel={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseDown={() => engineRef.current?.setVirtualGesture('pinch')}
+                  onMouseUp={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseLeave={() => engineRef.current?.setVirtualGesture('none')}
+                  title="Deploy Shield"
+                >
+                  <span className="btn-glyph">🤏</span>
+                  <span className="btn-label">Shield</span>
+                </button>
+                <button 
+                  className="gamepad-btn gravity-btn"
+                  onTouchStart={() => engineRef.current?.setVirtualGesture('fist')}
+                  onTouchEnd={() => engineRef.current?.setVirtualGesture('none')}
+                  onTouchCancel={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseDown={() => engineRef.current?.setVirtualGesture('fist')}
+                  onMouseUp={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseLeave={() => engineRef.current?.setVirtualGesture('none')}
+                  title="Gravity Vortex"
+                >
+                  <span className="btn-glyph">✊</span>
+                  <span className="btn-label">Gravity</span>
+                </button>
+              </div>
+
+              {/* Right Action Pad (Nova & Sabers) */}
+              <div className="gamepad-zone right-zone">
+                <button 
+                  className="gamepad-btn nova-btn"
+                  onTouchStart={() => engineRef.current?.setVirtualGesture('open')}
+                  onTouchEnd={() => engineRef.current?.setVirtualGesture('none')}
+                  onTouchCancel={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseDown={() => engineRef.current?.setVirtualGesture('open')}
+                  onMouseUp={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseLeave={() => engineRef.current?.setVirtualGesture('none')}
+                  title="Nova Blast"
+                >
+                  <span className="btn-glyph">🖐️</span>
+                  <span className="btn-label">Nova</span>
+                </button>
+                <button 
+                  className="gamepad-btn sabers-btn"
+                  onTouchStart={() => engineRef.current?.setVirtualGesture('peace')}
+                  onTouchEnd={() => engineRef.current?.setVirtualGesture('none')}
+                  onTouchCancel={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseDown={() => engineRef.current?.setVirtualGesture('peace')}
+                  onMouseUp={() => engineRef.current?.setVirtualGesture('none')}
+                  onMouseLeave={() => engineRef.current?.setVirtualGesture('none')}
+                  title="Cyber Sabers"
+                >
+                  <span className="btn-glyph">✌️</span>
+                  <span className="btn-label">Sabers</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="glass-panel" style={{
             position: 'absolute',

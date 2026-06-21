@@ -19,6 +19,8 @@ interface HUDOverlayProps {
   onShowInstructions: () => void;
   detectedGesture: 'none' | 'pinch' | 'fist' | 'open' | 'peace' | 'thumbs_up' | 'rock';
   novaBlastCooldown: number;
+  controlMode: 'camera' | 'touch';
+  onControlModeToggle: () => void;
 }
 
 export const HUDOverlay: React.FC<HUDOverlayProps> = ({
@@ -36,7 +38,9 @@ export const HUDOverlay: React.FC<HUDOverlayProps> = ({
   onPauseToggle,
   onShowInstructions,
   detectedGesture,
-  novaBlastCooldown
+  novaBlastCooldown,
+  controlMode,
+  onControlModeToggle
 }) => {
   const [volume, setVolume] = useState(soundSynth.getMasterVolume());
   const [isMuted, setIsMuted] = useState(soundSynth.getMuted());
@@ -91,6 +95,19 @@ export const HUDOverlay: React.FC<HUDOverlayProps> = ({
         >
           {isPaused ? <Play size={16} /> : <Pause size={16} />}
           <span>{isPaused ? "Resume" : "Pause"}</span>
+        </button>
+
+        {/* Control Mode Toggle */}
+        <button 
+          className="neon-btn neon-btn-sm"
+          onClick={onControlModeToggle}
+          title="Toggle Control Mode"
+          style={{
+            borderColor: controlMode === 'touch' ? 'var(--neon-yellow)' : 'var(--neon-cyan)',
+            color: controlMode === 'touch' ? 'var(--neon-yellow)' : 'var(--neon-cyan)'
+          }}
+        >
+          <span>{controlMode === 'touch' ? '🎮 Touch' : '📷 Camera'}</span>
         </button>
 
         {/* Center Level & XP display */}
@@ -304,55 +321,57 @@ export const HUDOverlay: React.FC<HUDOverlayProps> = ({
       )}
 
       {/* 4. BOTTOM GESTURE COMMAND PANEL */}
-      <div style={{
-        position: 'absolute',
-        bottom: '20px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        display: 'flex',
-        gap: '12px',
-        pointerEvents: 'none',
-        zIndex: 20
-      }}>
-        {[
-          { key: 'pinch', label: '🤏 PINCH: SHIELD', color: 'var(--neon-cyan)', active: detectedGesture === 'pinch', desc: 'Deflects hazards' },
-          { key: 'open', label: '🖐️ OPEN: NOVA BLAST', color: '#39ff14', active: detectedGesture === 'open', desc: 'Clears screen', cooldown: novaBlastCooldown },
-          { key: 'fist', label: '✊ FIST: GRAVITY', color: '#bf55ec', active: detectedGesture === 'fist', desc: 'Sucks items & slows foes' },
-          { key: 'peace', label: '✌️ PEACE: SABERS', color: '#ffea00', active: detectedGesture === 'peace', desc: 'Melee laser blades' },
-          { key: 'rock', label: '🤘 HORNS: QUIT', color: '#ff0055', active: detectedGesture === 'rock', desc: 'Hold 2s to self-destruct' }
-        ].map(gesture => (
-          <div 
-            key={gesture.key}
-            className="glass-panel"
-            style={{
-              padding: '6px 12px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              width: '145px',
-              border: `1.5px solid ${gesture.active ? gesture.color : 'rgba(255, 255, 255, 0.08)'}`,
-              boxShadow: gesture.active ? `0 0 10px ${gesture.color}44` : 'none',
-              background: gesture.active ? `${gesture.color}15` : 'rgba(255,255,255,0.02)',
-              opacity: gesture.active ? 1.0 : 0.45,
-              transition: 'all 0.15s ease',
-              borderRadius: '8px'
-            }}
-          >
-            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: gesture.active ? 'white' : 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-              {gesture.label}
-            </span>
-            {gesture.cooldown && gesture.cooldown > 0 ? (
-              <span style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--neon-pink)', marginTop: '2px' }}>
-                COOLDOWN: {gesture.cooldown.toFixed(1)}s
+      {controlMode === 'camera' && (
+        <div style={{
+          position: 'absolute',
+          bottom: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          gap: '12px',
+          pointerEvents: 'none',
+          zIndex: 20
+        }}>
+          {[
+            { key: 'pinch', label: '🤏 PINCH: SHIELD', color: 'var(--neon-cyan)', active: detectedGesture === 'pinch', desc: 'Deflects hazards' },
+            { key: 'open', label: '🖐️ OPEN: NOVA BLAST', color: '#39ff14', active: detectedGesture === 'open', desc: 'Clears screen', cooldown: novaBlastCooldown },
+            { key: 'fist', label: '✊ FIST: GRAVITY', color: '#bf55ec', active: detectedGesture === 'fist', desc: 'Sucks items & slows foes' },
+            { key: 'peace', label: '✌️ PEACE: SABERS', color: '#ffea00', active: detectedGesture === 'peace', desc: 'Melee laser blades' },
+            { key: 'rock', label: '🤘 HORNS: QUIT', color: '#ff0055', active: detectedGesture === 'rock', desc: 'Hold 2s to self-destruct' }
+          ].map(gesture => (
+            <div 
+              key={gesture.key}
+              className="glass-panel"
+              style={{
+                padding: '6px 12px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                width: '145px',
+                border: `1.5px solid ${gesture.active ? gesture.color : 'rgba(255, 255, 255, 0.08)'}`,
+                boxShadow: gesture.active ? `0 0 10px ${gesture.color}44` : 'none',
+                background: gesture.active ? `${gesture.color}15` : 'rgba(255,255,255,0.02)',
+                opacity: gesture.active ? 1.0 : 0.45,
+                transition: 'all 0.15s ease',
+                borderRadius: '8px'
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', fontWeight: 800, color: gesture.active ? 'white' : 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                {gesture.label}
               </span>
-            ) : (
-              <span style={{ fontSize: '0.58rem', color: gesture.active ? 'white' : 'rgba(255,255,255,0.4)', marginTop: '2px', textAlign: 'center' }}>
-                {gesture.desc}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
+              {gesture.cooldown && gesture.cooldown > 0 ? (
+                <span style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--neon-pink)', marginTop: '2px' }}>
+                  COOLDOWN: {gesture.cooldown.toFixed(1)}s
+                </span>
+              ) : (
+                <span style={{ fontSize: '0.58rem', color: gesture.active ? 'white' : 'rgba(255,255,255,0.4)', marginTop: '2px', textAlign: 'center' }}>
+                  {gesture.desc}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 };

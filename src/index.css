@@ -519,3 +519,178 @@ h1, h2, h3, .hud-title {
   color: rgba(255, 255, 255, 0.5);
   line-height: 1.3;
 }
+
+/* ====================================================
+   5. MOBILE COMPATIBILITY & VIRTUAL GAMEPAD STYLES
+   ==================================================== */
+
+/* Floating PIP camera overlay on mobile */
+@media (max-width: 768px) {
+  .playing-layout {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr !important;
+  }
+
+  .webcam-sidebar {
+    position: absolute !important;
+    top: 90px !important;
+    right: 20px !important;
+    width: 90px !important;
+    height: auto !important;
+    z-index: 40 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    pointer-events: none !important;
+  }
+
+  .webcam-sidebar .webcam-feed-container {
+    width: 90px !important;
+    height: 67px !important;
+    aspect-ratio: auto !important;
+    border: 1px solid rgba(0, 255, 255, 0.3) !important;
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.15) !important;
+    pointer-events: auto !important;
+  }
+
+  /* Hide diagnostics and stats in floating camera overlay */
+  .webcam-sidebar > :not(.webcam-feed-container) {
+    display: none !important;
+  }
+}
+
+/* Virtual Gamepad Action Buttons */
+.virtual-gamepad {
+  position: absolute;
+  bottom: 30px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 25;
+  pointer-events: none; /* let touch pass through to steering canvas */
+  width: 100%;
+}
+
+.gamepad-zone {
+  display: flex;
+  gap: 16px;
+  pointer-events: auto; /* catch button taps */
+}
+
+.left-zone {
+  padding-left: 20px;
+}
+
+.right-zone {
+  padding-right: 20px;
+}
+
+.gamepad-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 2px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  transition: all 0.1s cubic-bezier(0.25, 0.8, 0.25, 1);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.gamepad-btn:active {
+  transform: scale(0.9) translateY(2px);
+}
+
+.btn-glyph {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.btn-label {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-top: 1px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Cyberpunk Button Themes */
+.shield-btn {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.15), inset 0 0 8px rgba(0, 255, 255, 0.05);
+}
+
+.shield-btn:active {
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.5), inset 0 0 12px rgba(0, 255, 255, 0.2);
+  background: rgba(0, 255, 255, 0.12);
+}
+
+.gravity-btn {
+  border-color: #bf55ec;
+  box-shadow: 0 0 10px rgba(191, 85, 236, 0.15), inset 0 0 8px rgba(191, 85, 236, 0.05);
+}
+
+.gravity-btn:active {
+  box-shadow: 0 0 20px rgba(191, 85, 236, 0.5), inset 0 0 12px rgba(191, 85, 236, 0.2);
+  background: rgba(191, 85, 236, 0.12);
+}
+
+.nova-btn {
+  border-color: var(--neon-pink);
+  box-shadow: 0 0 10px rgba(255, 0, 85, 0.15), inset 0 0 8px rgba(255, 0, 85, 0.05);
+}
+
+.nova-btn:active {
+  box-shadow: 0 0 20px rgba(255, 0, 85, 0.5), inset 0 0 12px rgba(255, 0, 85, 0.2);
+  background: rgba(255, 0, 85, 0.12);
+}
+
+.sabers-btn {
+  border-color: var(--neon-green);
+  box-shadow: 0 0 10px rgba(57, 255, 20, 0.15), inset 0 0 8px rgba(57, 255, 20, 0.05);
+}
+
+.sabers-btn:active {
+  box-shadow: 0 0 20px rgba(57, 255, 20, 0.5), inset 0 0 12px rgba(57, 255, 20, 0.2);
+  background: rgba(57, 255, 20, 0.12);
+}
+
+/* Extra Mobile Adjustments */
+@media (max-width: 480px) {
+  .gamepad-btn {
+    width: 58px;
+    height: 58px;
+  }
+  .btn-glyph {
+    font-size: 1.15rem;
+  }
+  .btn-label {
+    font-size: 0.48rem;
+  }
+  .virtual-gamepad {
+    bottom: 15px;
+  }
+  .left-zone {
+    padding-left: 12px;
+    gap: 8px;
+  }
+  .right-zone {
+    padding-right: 12px;
+    gap: 8px;
+  }
+}

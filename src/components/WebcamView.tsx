@@ -33,6 +33,7 @@ interface WebcamViewProps {
   }) => void;
   triggerCameraTest?: boolean;
   onCameraTestComplete?: () => void;
+  controlMode: 'camera' | 'touch';
 }
 
 export const WebcamView: React.FC<WebcamViewProps> = ({
@@ -41,7 +42,8 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
   isPaused,
   onTelemetryUpdate,
   triggerCameraTest = false,
-  onCameraTestComplete
+  onCameraTestComplete,
+  controlMode
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -236,20 +238,41 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
   };
 
   useEffect(() => {
-    setupPipeline();
+    if (controlMode === 'camera') {
+      setupPipeline();
+    } else {
+      logMsg("Pausing WebcamView for Touch Mode...");
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current = null;
+      }
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      if (reconnectTimeoutRef.current !== null) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      setCameraStatus('loading');
+      setTrackerStatus('idle');
+    }
     return () => {
       logMsg("Cleaning up WebcamView component...");
       if (activeStreamRef.current) {
         activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current = null;
       }
       if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
       if (reconnectTimeoutRef.current !== null) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
     };
-  }, []);
+  }, [controlMode]);
 
   // 3. Sensor Frame Tracking Loop
   const startFrameLoop = () => {
