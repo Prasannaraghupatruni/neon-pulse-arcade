@@ -606,10 +606,12 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
         <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)' }}>Keep hand within frame.</p>
       </div>
 
-      <div className="webcam-feed-container">
-        {cameraStatus === 'permission_denied' ? (
+      <div className="webcam-feed-container" style={{ position: 'relative' }}>
+        {/* Render status overlays on top of the video container */}
+        {cameraStatus === 'permission_denied' && (
           <div style={{
-            height: '100%',
+            position: 'absolute',
+            inset: 0,
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
@@ -617,7 +619,9 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
             padding: '12px',
             textAlign: 'center',
             color: 'var(--neon-pink)',
-            gap: '10px'
+            gap: '10px',
+            background: 'rgba(10, 10, 15, 0.9)',
+            zIndex: 5
           }}>
             <CameraOff size={28} />
             <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Webcam Blocked</span>
@@ -626,29 +630,39 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
               <RefreshCw size={10} /> Retry Consent
             </button>
           </div>
-        ) : cameraStatus === 'loading' || trackerStatus === 'loading' ? (
+        )}
+
+        {(cameraStatus === 'loading' || trackerStatus === 'loading') && (
           <div style={{
-            height: '100%',
+            position: 'absolute',
+            inset: 0,
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
             alignItems: 'center',
             gap: '8px',
-            color: 'rgba(255,255,255,0.6)'
+            color: 'rgba(255,255,255,0.6)',
+            background: 'rgba(10, 10, 15, 0.85)',
+            zIndex: 5
           }}>
             <RefreshCw className="spinner" size={24} style={{ borderTopColor: 'var(--neon-cyan)', border: '2px solid rgba(255,255,255,0.1)' }} />
-            <span style={{ fontSize: '0.75rem' }}>Acquiring stream...</span>
+            <span style={{ fontSize: '0.75rem' }}>Acquiring stream & loading AI...</span>
           </div>
-        ) : cameraStatus === 'error' || trackerStatus === 'error' ? (
+        )}
+
+        {(cameraStatus === 'error' || trackerStatus === 'error') && cameraStatus !== 'permission_denied' && (
           <div style={{
-            height: '100%',
+            position: 'absolute',
+            inset: 0,
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
             alignItems: 'center',
             padding: '10px',
             color: 'var(--neon-pink)',
-            gap: '8px'
+            gap: '8px',
+            background: 'rgba(10, 10, 15, 0.9)',
+            zIndex: 5
           }}>
             <AlertCircle size={28} />
             <span style={{ fontSize: '0.75rem', textAlign: 'center' }}>Sensor offline</span>
@@ -659,20 +673,32 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
               <RefreshCw size={10} /> Restart Sensor
             </button>
           </div>
-        ) : (
-          <>
-            <video 
-              ref={videoRef}
-              playsInline 
-              muted 
-              className="webcam-video"
-            />
-            <canvas 
-              ref={overlayCanvasRef}
-              className="webcam-canvas-overlay"
-            />
-          </>
         )}
+
+        {/* Always render the video and canvas so the refs are always active! */}
+        <video 
+          ref={videoRef}
+          playsInline 
+          muted 
+          className="webcam-video"
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: (cameraStatus === 'ready' && trackerStatus === 'ready') ? 'block' : 'none'
+          }}
+        />
+        <canvas 
+          ref={overlayCanvasRef}
+          className="webcam-canvas-overlay"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            display: (cameraStatus === 'ready' && trackerStatus === 'ready') ? 'block' : 'none',
+            zIndex: 2
+          }}
+        />
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
