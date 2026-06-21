@@ -152,8 +152,17 @@ export const App: React.FC = () => {
     trackingFps: 0,
     confidence: 0,
     handsCount: 0,
-    lastTimestamp: 0
+    lastTimestamp: 0,
+    streamActive: false,
+    videoTracksCount: 0,
+    videoReadyState: 0,
+    frameCount: 0,
+    diagnosticLogs: [] as string[],
+    isTestingCamera: false,
+    cameraTestResults: {} as Record<string, 'pending' | 'success' | 'fail' | 'none'>
   });
+
+  const [triggerCameraTest, setTriggerCameraTest] = useState(false);
 
   // Fetch High Scores on mount
   useEffect(() => {
@@ -525,6 +534,8 @@ export const App: React.FC = () => {
               onTrackingUpdate={handleTrackingUpdate}
               isPaused={false}
               onTelemetryUpdate={handleTelemetryUpdate}
+              triggerCameraTest={triggerCameraTest}
+              onCameraTestComplete={() => setTriggerCameraTest(false)}
             />
 
             {showDiagnostics && (
@@ -539,6 +550,14 @@ export const App: React.FC = () => {
                 lastTimestamp={telemetry.lastTimestamp}
                 modelLoaded={telemetry.cameraStatus === 'ready'}
                 onClose={() => setShowDiagnostics(false)}
+                streamActive={telemetry.streamActive}
+                videoTracksCount={telemetry.videoTracksCount}
+                videoReadyState={telemetry.videoReadyState}
+                frameCount={telemetry.frameCount}
+                diagnosticLogs={telemetry.diagnosticLogs}
+                onRunCameraTest={() => setTriggerCameraTest(true)}
+                isTestingCamera={telemetry.isTestingCamera}
+                cameraTestResults={telemetry.cameraTestResults}
               />
             )}
           </div>

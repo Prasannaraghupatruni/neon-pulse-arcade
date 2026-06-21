@@ -23,14 +23,25 @@ interface WebcamViewProps {
     confidence: number;
     handsCount: number;
     lastTimestamp: number;
+    streamActive: boolean;
+    videoTracksCount: number;
+    videoReadyState: number;
+    frameCount: number;
+    diagnosticLogs: string[];
+    isTestingCamera: boolean;
+    cameraTestResults: Record<string, 'pending' | 'success' | 'fail' | 'none'>;
   }) => void;
+  triggerCameraTest?: boolean;
+  onCameraTestComplete?: () => void;
 }
 
 export const WebcamView: React.FC<WebcamViewProps> = ({
   settings,
   onTrackingUpdate,
   isPaused,
-  onTelemetryUpdate
+  onTelemetryUpdate,
+  triggerCameraTest = false,
+  onCameraTestComplete
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,14 +51,42 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
   const [cameraStatus, setCameraStatus] = useState<'ready' | 'permission_denied' | 'loading' | 'error'>('loading');
   const [isHandVisible, setIsHandVisible] = useState<boolean>(false);
   const [confidence, setConfidence] = useState<number>(0);
-  const [cameraResolution, setCameraResolution] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
-  // References
+  // Diagnostics and Test state
+  const [isTestingCamera, setIsTestingCamera] = useState<boolean>(false);
+
+  // Refs to avoid stale closure issues
   const smootherRef = useRef<HandPositionSmoother>(new HandPositionSmoother());
   const animationFrameRef = useRef<number | null>(null);
   const lastDetectionTimeRef = useRef<number>(0);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const activeStreamRef = useRef<MediaStream | null>(null);
+
+  const logsRef = useRef<string[]>([]);
+  const frameCountRef = useRef<number>(0);
+  const lastFrameProcessedTime = useRef<number>(performance.now());
+  const isTestingCameraRef = useRef<boolean>(false);
+  const cameraTestResultsRef = useRef<Record<string, 'pending' | 'success' | 'fail' | 'none'>>({});
+
+  // Helper to log diagnostics message and propagate telemetry
+  const logMsg = (msg: string) => {
+    console.log(msg);
+    const timestamp = new Date().toLocaleTimeString();
+    const formatted = `[${timestamp}] ${msg}`;
+    logsRef.current = [...logsRef.current, formatted].slice(-8); // Keep last 8 logs
+    updateTelemetry();
+  };
+
+  const updateTestingState = (testing: boolean) => {
+    isTestingCameraRef.current = testing;
+    setIsTestingCamera(testing);
+    updateTelemetry();
+  };
+
+  const updateTestResultsState = (results: Record<string, 'pending' | 'success' | 'fail' | 'none'>) => {
+    cameraTestResultsRef.current = results;
+    updateTelemetry();
+  };
 
   // Apply tracking calibration settings
   useEffect(() => {
@@ -57,50 +96,51 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
     );
   }, [settings.tracking.sensitivity, settings.tracking.smoothing]);
 
-  // 1. Initialize MediaPipe HandLandmarker Model
-  useEffect(() => {
-    const loadModel = async () => {
-      try {
-        setTrackerStatus('loading');
-        await handTracker.initialize((status, err) => {
-          setTrackerStatus(status);
-          if (err) setTrackerError(err);
-        });
-        // Double safety fallback: ensure component status matches resolved tracker status
-        const currentStatus = handTracker.getStatus();
-        setTrackerStatus(currentStatus);
-        if (currentStatus === 'error') {
-          setTrackerError(handTracker.getErrorMessage());
-        }
-      } catch (err) {
-        setTrackerStatus('error');
-        setTrackerError(err instanceof Error ? err.message : 'Model startup failed.');
-      }
-    };
-    loadModel();
+  // Telemetry update propagator
+  const updateTelemetry = (
+    cStatus = cameraStatus,
+    tStatus = trackerStatus
+  ) => {
+    const video = videoRef.current;
+    onTelemetryUpdate({
+      cameraStatus: cStatus,
+      trackingStatus: tStatus === 'ready' ? (isHandVisible ? 'active' : 'searching') : 'lost',
+      resolution: video ? { width: video.videoWidth, height: video.videoHeight } : { width: 0, height: 0 },
+      trackingFps: handTracker.getTrackingFPS(),
+      confidence: confidence,
+      handsCount: isHandVisible ? 1 : 0,
+      lastTimestamp: handTracker.getLastDetectionTime(),
+      streamActive: activeStreamRef.current ? activeStreamRef.current.active : false,
+      videoTracksCount: activeStreamRef.current ? activeStreamRef.current.getVideoTracks().length : 0,
+      videoReadyState: video ? video.readyState : 0,
+      frameCount: frameCountRef.current,
+      diagnosticLogs: logsRef.current,
+      isTestingCamera: isTestingCameraRef.current,
+      cameraTestResults: cameraTestResultsRef.current
+    });
+  };
 
-    return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (reconnectTimeoutRef.current !== null) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // 2. Camera Access Setup & Automatic Reconnection Loop
-  const startCamera = async () => {
+  // 1 & 2. Camera Access Setup and Pipeline Verification Loop
+  const setupPipeline = async () => {
+    logMsg("Initializing pipeline...");
     setCameraStatus('loading');
+    setTrackerStatus('loading');
     
-    // Stop any existing tracks before requesting a new stream
+    // Stop any existing tracks/streams before starting
     if (activeStreamRef.current) {
+      logMsg("Stopping existing camera stream...");
       activeStreamRef.current.getTracks().forEach(t => t.stop());
       activeStreamRef.current = null;
     }
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
 
+    let stream: MediaStream;
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
+      logMsg("Requesting webcam stream (getUserMedia)...");
+      stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640 },
           height: { ideal: 480 },
@@ -109,43 +149,101 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
         },
         audio: false
       });
-
-      activeStreamRef.current = mediaStream;
+      activeStreamRef.current = stream;
       setCameraStatus('ready');
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(e => console.warn("Auto-play blocked:", e));
-          
-          // Log initial capture resolution
-          if (videoRef.current) {
-            setCameraResolution({
-              width: videoRef.current.videoWidth,
-              height: videoRef.current.videoHeight
-            });
-          }
-        };
-      }
+      logMsg(`Stream attached. Active: ${stream.active}. Video tracks: ${stream.getVideoTracks().length}`);
     } catch (err) {
       console.error('Webcam initialization failed:', err);
+      logMsg(`[ERROR] Webcam access failed: ${err instanceof Error ? err.message : String(err)}`);
       const name = (err as { name?: string }).name || '';
       if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
         setCameraStatus('permission_denied');
       } else {
         setCameraStatus('error');
       }
-      
-      // Auto-reconnect: try restarting in 4 seconds
-      reconnectTimeoutRef.current = window.setTimeout(startCamera, 4000);
+      return;
     }
+
+    const video = videoRef.current;
+    if (!video) {
+      logMsg("[ERROR] Video element ref is null!");
+      return;
+    }
+
+    try {
+      video.srcObject = stream;
+      logMsg("Stream attached to video element.");
+      
+      logMsg("Calling video.play()...");
+      await video.play();
+      logMsg("Video playing successfully.");
+    } catch (playErr) {
+      logMsg(`[ERROR] video.play() failed: ${playErr instanceof Error ? playErr.message : String(playErr)}`);
+      setCameraStatus('error');
+      return;
+    }
+
+    // Wait until video readyState and dimensions are valid
+    logMsg("Waiting for video elements to become fully ready...");
+    const checkVideoReady = (): Promise<void> => {
+      return new Promise((resolve) => {
+        const interval = setInterval(() => {
+          if (
+            video.readyState >= 4 &&
+            video.videoWidth > 0 &&
+            video.videoHeight > 0
+          ) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 100);
+      });
+    };
+
+    await checkVideoReady();
+    logMsg(`Video dimensions detected: ${video.videoWidth}x${video.videoHeight}. ReadyState: ${video.readyState}`);
+
+    // Initialize MediaPipe HandLandmarker locally
+    try {
+      logMsg("Initializing MediaPipe HandLandmarker...");
+      await handTracker.initialize((status, err) => {
+        setTrackerStatus(status);
+        if (err) {
+          setTrackerError(err);
+          logMsg(`[ERROR] MediaPipe status change: ${status}, error: ${err}`);
+        } else {
+          logMsg(`MediaPipe status: ${status}`);
+        }
+      });
+      
+      const currentStatus = handTracker.getStatus();
+      setTrackerStatus(currentStatus);
+      if (currentStatus === 'ready') {
+        logMsg("MediaPipe initialized successfully.");
+      } else if (currentStatus === 'error') {
+        logMsg(`[ERROR] MediaPipe initialization error: ${handTracker.getErrorMessage()}`);
+        return;
+      }
+    } catch (err) {
+      logMsg(`[ERROR] MediaPipe initialization failed: ${err instanceof Error ? err.message : String(err)}`);
+      setTrackerStatus('error');
+      return;
+    }
+
+    // Start frame processing loop
+    logMsg("Starting frame processing loop...");
+    startFrameLoop();
   };
 
   useEffect(() => {
-    startCamera();
+    setupPipeline();
     return () => {
+      logMsg("Cleaning up WebcamView component...");
       if (activeStreamRef.current) {
         activeStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
       if (reconnectTimeoutRef.current !== null) {
         clearTimeout(reconnectTimeoutRef.current);
@@ -154,28 +252,45 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
   }, []);
 
   // 3. Sensor Frame Tracking Loop
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || trackerStatus !== 'ready' || cameraStatus !== 'ready' || isPaused) {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-      onTrackingUpdate(0.5, 0.5, false, 0, false);
-      return;
+  const startFrameLoop = () => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
     }
+    
+    let isFirstFrame = true;
+    let isFirstHand = true;
+    lastFrameProcessedTime.current = performance.now();
 
     const processFrame = () => {
+      const video = videoRef.current;
+      if (!video || isPaused) {
+        animationFrameRef.current = requestAnimationFrame(processFrame);
+        return;
+      }
+
       const now = performance.now();
       const dt = (now - lastDetectionTimeRef.current) / 1000;
       lastDetectionTimeRef.current = now;
 
       if (video.readyState >= 2) {
+        frameCountRef.current++;
+        lastFrameProcessedTime.current = now;
+
+        if (isFirstFrame) {
+          isFirstFrame = false;
+          logMsg("First frame processed.");
+        }
+
         const trackingData: TrackingData | null = handTracker.detectFrame(video, now);
 
         if (trackingData) {
           setIsHandVisible(true);
           setConfidence(trackingData.confidence);
+
+          if (isFirstHand) {
+            isFirstHand = false;
+            logMsg("First hand detected!");
+          }
 
           // Apply Kalman and adaptive smoothing filters
           const smoothedPos = smootherRef.current.smooth(trackingData.indexTip, dt);
@@ -197,54 +312,168 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
             trackingData.rawLandmarks
           );
 
-          // Draw knuckles colored overlay based on confidence
           drawOverlay(trackingData);
-
-          // Propagate telemetry
-          onTelemetryUpdate({
-            cameraStatus,
-            trackingStatus: 'active',
-            resolution: cameraResolution,
-            trackingFps: handTracker.getTrackingFPS(),
-            confidence: trackingData.confidence,
-            handsCount: 1,
-            lastTimestamp: handTracker.getLastDetectionTime()
-          });
         } else {
-          // Hand lost searching state
           setIsHandVisible(false);
           setConfidence(0);
           smootherRef.current.reset();
           
           onTrackingUpdate(0.5, 0.5, false, 0, false);
           clearOverlay();
-
-          onTelemetryUpdate({
-            cameraStatus,
-            trackingStatus: 'searching',
-            resolution: cameraResolution,
-            trackingFps: handTracker.getTrackingFPS(),
-            confidence: 0,
-            handsCount: 0,
-            lastTimestamp: handTracker.getLastDetectionTime()
-          });
         }
+
+        // Propagate telemetry updates on every frame
+        updateTelemetry();
       }
 
       animationFrameRef.current = requestAnimationFrame(processFrame);
     };
 
     animationFrameRef.current = requestAnimationFrame(processFrame);
+  };
 
-    return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
+  // Automatic recovery monitor: restart pipeline if no frames for 5s
+  useEffect(() => {
+    const monitor = setInterval(() => {
+      if (isPaused || cameraStatus !== 'ready' || trackerStatus !== 'ready' || isTestingCameraRef.current) return;
+
+      const now = performance.now();
+      const timeSinceLastFrame = now - lastFrameProcessedTime.current;
+
+      if (timeSinceLastFrame > 5000) {
+        logMsg(`[RECOVERY] No frames received for ${Math.round(timeSinceLastFrame / 1000)}s! Initiating automatic recovery...`);
+        setupPipeline();
       }
-    };
-  }, [trackerStatus, cameraStatus, isPaused, cameraResolution, onTrackingUpdate, onTelemetryUpdate]);
+    }, 1000);
 
-  // Render skeleton with colors mapped to tracking confidence
+    return () => clearInterval(monitor);
+  }, [cameraStatus, trackerStatus, isPaused]);
+
+  // Run Camera Diagnostic test
+  const runCameraTest = async () => {
+    if (isTestingCameraRef.current) return;
+    updateTestingState(true);
+    logMsg("[TEST] Starting Camera Test...");
+    
+    const results: Record<string, 'pending' | 'success' | 'fail' | 'none'> = {
+      cameraAccessible: 'pending',
+      streamActive: 'pending',
+      videoPlaying: 'pending',
+      videoDimensions: 'pending',
+      framesUpdating: 'pending',
+      mediaPipeReceiving: 'pending',
+      handDetection: 'pending'
+    };
+    
+    updateTestResultsState({ ...results });
+
+    // Step 1: Camera Accessible
+    try {
+      const testStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      results.cameraAccessible = 'success';
+      updateTestResultsState({ ...results });
+      
+      // Step 2: Stream Active
+      if (testStream && testStream.active) {
+        results.streamActive = 'success';
+      } else {
+        results.streamActive = 'fail';
+      }
+      updateTestResultsState({ ...results });
+      
+      testStream.getTracks().forEach(t => t.stop());
+    } catch (err) {
+      results.cameraAccessible = 'fail';
+      results.streamActive = 'fail';
+      results.videoPlaying = 'fail';
+      results.videoDimensions = 'fail';
+      results.framesUpdating = 'fail';
+      results.mediaPipeReceiving = 'fail';
+      results.handDetection = 'fail';
+      updateTestResultsState({ ...results });
+      updateTestingState(false);
+      logMsg(`[TEST] Camera Test failed at step 1: ${err}`);
+      return;
+    }
+
+    // Inspect live app resources
+    const video = videoRef.current;
+    const stream = activeStreamRef.current;
+
+    if (!video || !stream) {
+      logMsg("[TEST] Application webcam stream or video element is not active.");
+      results.videoPlaying = 'fail';
+      results.videoDimensions = 'fail';
+      results.framesUpdating = 'fail';
+      results.mediaPipeReceiving = 'fail';
+      results.handDetection = 'fail';
+      updateTestResultsState({ ...results });
+      updateTestingState(false);
+      return;
+    }
+
+    // Step 3: Video Playing
+    if (!video.paused && video.currentTime > 0) {
+      results.videoPlaying = 'success';
+    } else {
+      await new Promise(r => setTimeout(r, 600));
+      if (!video.paused && video.currentTime > 0) {
+        results.videoPlaying = 'success';
+      } else {
+        results.videoPlaying = 'fail';
+      }
+    }
+    updateTestResultsState({ ...results });
+
+    // Step 4: Video Dimensions Available
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      results.videoDimensions = 'success';
+    } else {
+      results.videoDimensions = 'fail';
+    }
+    updateTestResultsState({ ...results });
+
+    // Step 5: Frames Updating
+    const startFrames = frameCountRef.current;
+    await new Promise(r => setTimeout(r, 600));
+    const endFrames = frameCountRef.current;
+    if (endFrames > startFrames) {
+      results.framesUpdating = 'success';
+    } else {
+      results.framesUpdating = 'fail';
+    }
+    updateTestResultsState({ ...results });
+
+    // Step 6: MediaPipe Receiving Frames
+    if (handTracker.getTrackingFPS() > 0 || (endFrames > startFrames && handTracker.getStatus() === 'ready')) {
+      results.mediaPipeReceiving = 'success';
+    } else {
+      results.mediaPipeReceiving = 'fail';
+    }
+    updateTestResultsState({ ...results });
+
+    // Step 7: Hand Detection Operational
+    if (handTracker.getStatus() === 'ready') {
+      results.handDetection = 'success';
+    } else {
+      results.handDetection = 'fail';
+    }
+    updateTestResultsState({ ...results });
+    updateTestingState(false);
+    
+    logMsg("[TEST] Camera Test completed.");
+  };
+
+  // External test trigger listener
+  useEffect(() => {
+    if (triggerCameraTest) {
+      runCameraTest().then(() => {
+        if (onCameraTestComplete) onCameraTestComplete();
+      });
+    }
+  }, [triggerCameraTest]);
+
+  // Render skeleton overlays with colors mapped to confidence
   const drawOverlay = (data: TrackingData) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
@@ -257,13 +486,11 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Pick skeleton glow color based on confidence thresholds
-    // Green = Excellent (>80%), Yellow = Medium (50-80%), Red = Weak (<50%)
-    let statusColor = 'rgba(255, 0, 85, 0.6)'; // Red lost fallback
+    let statusColor = 'rgba(255, 0, 85, 0.6)';
     if (data.confidence >= 0.80) {
-      statusColor = 'rgba(57, 255, 20, 0.65)'; // Neon Green
+      statusColor = 'rgba(57, 255, 20, 0.65)';
     } else if (data.confidence >= 0.50) {
-      statusColor = 'rgba(255, 234, 0, 0.65)'; // Neon Yellow
+      statusColor = 'rgba(255, 234, 0, 0.65)';
     }
 
     ctx.strokeStyle = statusColor;
@@ -289,13 +516,12 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
       }
     }
 
-    // Draw knuckle joints
     for (let i = 0; i < data.rawLandmarks.length; i++) {
       const pt = data.rawLandmarks[i];
       if (pt) {
         ctx.beginPath();
         if (i === 4 || i === 8 || i === 12) {
-          ctx.fillStyle = '#ff0055'; // fingertip targets
+          ctx.fillStyle = '#ff0055';
           ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 4.0, 0, Math.PI * 2);
         } else {
           ctx.fillStyle = data.confidence >= 0.8 ? '#00ffff' : '#ffea00';
@@ -305,7 +531,6 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
       }
     }
 
-    // Hand distance calibration check
     const wrist = data.rawLandmarks[0];
     const knuckle = data.rawLandmarks[5];
     let distancePrompt = 'ACQUIRING...';
@@ -345,7 +570,6 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw holographic guide silhouette in center
     ctx.save();
     ctx.strokeStyle = 'rgba(0, 255, 255, 0.22)';
     ctx.lineWidth = 1.0;
@@ -355,19 +579,14 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
     const cy = canvas.height * 0.55;
 
     ctx.beginPath();
-    // Wrist base
     ctx.arc(cx, cy + 30, 12, Math.PI, 0);
-    // Palm lines up to knuckles
     ctx.lineTo(cx + 20, cy - 8);
-    // Index finger guide
     ctx.lineTo(cx + 20, cy - 45);
     ctx.arc(cx + 16, cy - 45, 4, 0, Math.PI, true);
     ctx.lineTo(cx + 12, cy - 8);
-    // Middle finger guide
     ctx.lineTo(cx + 8, cy - 48);
     ctx.arc(cx + 4, cy - 48, 4, 0, Math.PI, true);
     ctx.lineTo(cx, cy - 8);
-    // Thumb guide
     ctx.lineTo(cx - 20, cy + 8);
     ctx.arc(cx - 20, cy + 12, 5, -Math.PI/2, Math.PI/2, true);
     ctx.closePath();
@@ -387,7 +606,6 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
         <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)' }}>Keep hand within frame.</p>
       </div>
 
-      {/* Video Preview Feed Container */}
       <div className="webcam-feed-container">
         {cameraStatus === 'permission_denied' ? (
           <div style={{
@@ -404,7 +622,7 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
             <CameraOff size={28} />
             <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Webcam Blocked</span>
             <p style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.5)' }}>Please allow camera permission in browser URL settings.</p>
-            <button className="neon-btn neon-btn-primary neon-btn-sm" onClick={startCamera} style={{ padding: '6px 12px', fontSize: '0.7rem' }}>
+            <button className="neon-btn neon-btn-primary neon-btn-sm" onClick={setupPipeline} style={{ padding: '6px 12px', fontSize: '0.7rem' }}>
               <RefreshCw size={10} /> Retry Consent
             </button>
           </div>
@@ -437,6 +655,9 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
             <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>
               {trackerError || 'Reconnecting...'}
             </p>
+            <button className="neon-btn neon-btn-primary neon-btn-sm" onClick={setupPipeline} style={{ padding: '6px 12px', fontSize: '0.7rem', marginTop: '4px' }}>
+              <RefreshCw size={10} /> Restart Sensor
+            </button>
           </div>
         ) : (
           <>
@@ -454,7 +675,6 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
         )}
       </div>
 
-      {/* Diagnostics panel quick indicator */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
           <span>Sensor quality:</span>
@@ -475,6 +695,24 @@ export const WebcamView: React.FC<WebcamViewProps> = ({
           </span>
         </div>
       </div>
+
+      <button
+        onClick={runCameraTest}
+        disabled={isTestingCamera}
+        className="neon-btn"
+        style={{
+          width: '100%',
+          fontSize: '0.7rem',
+          padding: '6px',
+          borderColor: isTestingCamera ? 'rgba(255,255,255,0.1)' : 'var(--neon-cyan)',
+          color: isTestingCamera ? 'rgba(255,255,255,0.3)' : 'var(--neon-cyan)',
+          boxShadow: isTestingCamera ? 'none' : '0 0 5px rgba(0, 255, 255, 0.1)',
+          cursor: isTestingCamera ? 'not-allowed' : 'pointer',
+          marginTop: '4px'
+        }}
+      >
+        {isTestingCamera ? 'TESTING CAMERA...' : 'TEST CAMERA'}
+      </button>
     </div>
   );
 };
